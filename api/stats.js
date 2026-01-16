@@ -1,28 +1,31 @@
-import { Redis } from '@upstash/redis';
-
-const redis = new Redis({
-    url: process.env.UPSTASH_REDIS_REST_URL,
-    token: process.env.UPSTASH_REDIS_REST_TOKEN,
-});
-
 export default async function handler(req, res) {
+    const url = process.env.UPSTASH_REDIS_REST_URL;
+    const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+
     try {
-        // Simple key-based protection (can be passed in query params)
-        // In a real app, you'd use proper auth, but for a wedding site, a hidden path/key is usually enough
         const authKey = req.query.key;
         if (authKey !== 'nuhu-sakina-2026') {
             return res.status(401).json({ error: 'Unauthorized' });
         }
 
-        const totalHits = await redis.get('wedding:total_hits') || 0;
-        const uniqueVisitors = await redis.get('wedding:unique_visitors') || 0;
+        // Helper to fetch from Upstash REST
+        async function upstash(command) {
+            const response = await fetch(`${url}/${command.join('/')}`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            return response.json();
+        }
+
+        const { result: totalHits } = await upstash(['get', 'wedding:total_hits']);
+        const { result: uniqueVisitors } = await upstash(['get', 'wedding:unique_visitors']);
 
         res.status(200).json({
-            totalHits,
-            uniqueVisitors,
+            totalHits: totalHits || 0,
+            uniqueVisitors: uniqueVisitors || 0,
             timestamp: new Date().toISOString()
         });
     } catch (error) {
+        console.error('Stats fetch error:', error);
         res.status(500).json({ error: 'Failed to fetch stats' });
     }
 }

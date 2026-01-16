@@ -1,35 +1,43 @@
-import { Redis } from '@upstash/redis';
-
-const redis = new Redis({
-    url: process.env.UPSTASH_REDIS_REST_URL,
-    token: process.env.UPSTASH_REDIS_REST_TOKEN,
-});
-
 export default async function handler(req, res) {
+    const url = process.env.UPSTASH_REDIS_REST_URL;
+    const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+    if (!url || !token) {
+        return res.status(500).json({ error: 'Redis configuration missing' });
+    }
+
     try {
         const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-        const ua = req.headers['user-agent'];
+        const ua = req.headers['user-agent'] || 'unknown';
         const fingerprint = btoa(`${ip}-${ua}`).substring(0, 32);
 
-        // Create a time-based key (hourly) to prevent duplicate counts from the same user
         const now = new Date();
         const hourlyKey = `vstat:${fingerprint}:${now.getUTCFullYear()}${now.getUTCMonth()}${now.getUTCDate()}${now.getUTCHours()}`;
 
-        // 1. Increment total hits (every page load)
-        await redis.incr('wedding:total_hits');
+        // Helper for Upstash REST calls
+        async function upstash(command) {
+            const response = await fetch(`${url}/${command.join('/')}`, {
+                method: 'POST', // Use POST for writing
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            return response.json();
+        }
 
-        // 2. Track unique visitor for this hour
-        // SET NX returns OK if key was set, null if it already exists
-        const isNewThisHour = await redis.set(hourlyKey, '1', { nx: true, ex: 3600 });
+        // 1. Increment total hits
+        await upstash(['incr', 'wedding:total_hits']);
 
-        if (isNewThisHour) {
-            // If it's a new visitor this hour, increment unique count
-            await redis.incr('wedding:unique_visitors');
+        // 2. Track unique visitor using SET with EX and NX
+        // Command format: SET key value EX seconds NX
+        const setResponse = await upstash(['set', hourlyKey, '1', 'ex', '3600', 'nx']);
+
+        if (setResponse.result === 'OK') {
+            // If the SET returned OK, it was a new unique visitor for this hour
+            await upstash(['incr', 'wedding:unique_visitors']);
         }
 
         res.status(200).json({ success: true });
     } catch (error) {
         console.error('Tracking error:', error);
-        res.status(500).json({ success: false, error: 'Failed to track visitor' });
+        res.status(500).json({ success: false });
     }
 }
