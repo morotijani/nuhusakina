@@ -630,6 +630,9 @@
   <script>
     // Initialize Lucide Icons
     lucide.createIcons();
+
+    // Visitor Tracking
+    fetch('/api/track').catch(err => console.error('Tracking failed:', err));
   </script>
 </body>
 
